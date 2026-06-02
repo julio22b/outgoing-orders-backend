@@ -22,24 +22,28 @@ interface UpdateOrderBody extends CreateOrderBody {
 const getAllOrders = async (req: Request, res: Response<OutgoingOrderInterface[] | { message: string }>) => {
     try {
         const result: QueryResult<OutgoingOrderInterface> = await pool.query(`
-      SELECT 
-        orders.id,
-        orders.customer,
-        orders.status,
-        orders.priority,
-        orders.created_at,
-        ARRAY_AGG(items.name) AS products,
-        JSON_AGG(
-          JSON_BUILD_OBJECT(
-            'status', status_history.status,
-            'timestamp', status_history.timestamp
-          )
-        ) AS "statusHistory"
-      FROM orders
-      LEFT JOIN items ON orders.id = items.order_id
-      LEFT JOIN status_history ON orders.id = status_history.order_id
-      GROUP BY orders.id
-    `);
+            SELECT 
+            orders.id,
+            orders.customer,
+            orders.status,
+            orders.priority,
+            orders.created_at AS "createdAt",
+            COALESCE(i.products, '{}') AS products,
+            COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
+            FROM orders
+            LEFT JOIN (
+            SELECT order_id, ARRAY_AGG(name) AS products
+            FROM items
+            GROUP BY order_id
+            ) i ON orders.id = i.order_id
+            LEFT JOIN (
+            SELECT order_id, JSON_AGG(
+            JSON_BUILD_OBJECT('status', status, 'timestamp', timestamp)
+            ) AS status_history
+            FROM status_history
+            GROUP BY order_id
+            ) sh ON orders.id = sh.order_id
+        `);
 
         res.status(200).json(result.rows);
     } catch (error) {
@@ -49,30 +53,35 @@ const getAllOrders = async (req: Request, res: Response<OutgoingOrderInterface[]
 
 const getOrder = async (req: Request<OrderParams>, res: Response<OutgoingOrderInterface | { message: string }>) => {
     try {
-        const result = await pool.query(
+        const result: QueryResult<OutgoingOrderInterface> = await pool.query(
             `
-        SELECT 
-          orders.id,
-          orders.customer,
-          orders.status,
-          orders.priority,
-          orders.created_at,
-          ARRAY_AGG(items.name) AS products,
-          JSON_AGG(
-            JSON_BUILD_OBJECT(
-              'status', status_history.status,
-              'timestamp', status_history.timestamp
-            )
-          ) AS "statusHistory"
-        FROM orders
-        LEFT JOIN items ON orders.id = items.order_id
-        LEFT JOIN status_history ON orders.id = status_history.order_id
-        WHERE orders.id = $1
-        GROUP BY orders.id
-        `,
+            SELECT 
+            orders.id,
+            orders.customer,
+            orders.status,
+            orders.priority,
+            orders.created_at AS "createdAt",
+            COALESCE(i.products, '{}') AS products,
+            COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
+            FROM orders
+            LEFT JOIN (
+            SELECT order_id, ARRAY_AGG(name) AS products
+            FROM items
+            GROUP BY order_id
+            ) i ON orders.id = i.order_id
+            LEFT JOIN (
+            SELECT order_id, JSON_AGG(
+            JSON_BUILD_OBJECT('status', status, 'timestamp', timestamp)
+            ) AS status_history
+            FROM status_history
+            GROUP BY order_id
+            ) sh ON orders.id = sh.order_id
+            WHERE orders.id = $1
+            `,
             [req.params.id],
         );
 
+        console.log('heklloo')
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Order not found' });
         }
@@ -91,7 +100,7 @@ const createOrder = async (
     try {
         const { customer, status, priority, items, createdAt } = req.body;
 
-        if (!customer || !status || !priority || !items.length || !createdAt) {
+        if (!customer || !status || !priority || !items?.length || !createdAt) {
             return res.status(400).json({ message: 'Invalid request body' });
         }
 
@@ -118,26 +127,36 @@ const createOrder = async (
             );
         }
 
+        await client.query('INSERT INTO status_history (order_id, status, timestamp) VALUES ($1, $2, $3)', [
+            order.id,
+            status,
+            createdAt,
+        ]);
+
         const finalResult: QueryResult<OutgoingOrderInterface> = await client.query(
             `
             SELECT 
-              orders.id,
-              orders.customer,
-              orders.status,
-              orders.priority,
-              orders.created_at AS "createdAt",
-              ARRAY_AGG(items.name) AS products,
-              JSON_AGG(
-                JSON_BUILD_OBJECT(
-                  'status', status_history.status,
-                  'timestamp', status_history.timestamp
-                )
-              ) AS "statusHistory"
+            orders.id,
+            orders.customer,
+            orders.status,
+            orders.priority,
+            orders.created_at AS "createdAt",
+            COALESCE(i.products, '{}') AS products,
+            COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
             FROM orders
-            LEFT JOIN items ON orders.id = items.order_id
-            LEFT JOIN status_history ON orders.id = status_history.order_id
+            LEFT JOIN (
+            SELECT order_id, ARRAY_AGG(name) AS products
+            FROM items
+            GROUP BY order_id
+            ) i ON orders.id = i.order_id
+            LEFT JOIN (
+            SELECT order_id, JSON_AGG(
+            JSON_BUILD_OBJECT('status', status, 'timestamp', timestamp)
+            ) AS status_history
+            FROM status_history
+            GROUP BY order_id
+            ) sh ON orders.id = sh.order_id
             WHERE orders.id = $1
-            GROUP BY orders.id
             `,
             [order.id],
         );
@@ -146,6 +165,7 @@ const createOrder = async (
 
         res.status(201).json(finalResult.rows[0]);
     } catch (error) {
+        console.error(error); // add this
         await client.query('ROLLBACK');
         res.status(500).json({ message: 'Internal server error' });
     } finally {
@@ -159,60 +179,72 @@ const updateOrder = async (req: Request<OrderParams, any, UpdateOrderBody>, res:
         const { id } = req.params;
         const { customer, status, priority, items, createdAt } = req.body;
 
-        if (!customer || !status || !priority || !items.length || !createdAt) {
+        if (!customer || !status || !priority || !items?.length || !createdAt) {
             return res.status(400).json({ message: 'Invalid request body' });
         }
 
         await client.query('BEGIN');
 
-        const orderResult: QueryResult<OutgoingOrderInterface> = await client.query(
-            `
-            UPDATE orders
-            SET customer = $1, status = $2, priority = $3
-            WHERE orders.id = $4
-            RETURNING *
-            `,
-            [customer, status, priority, id],
-        );
+        const currentOrder = await client.query('SELECT status FROM orders WHERE id = $1', [id]);
 
-        const updatedOrder = orderResult.rows[0];
-
-        if (!updatedOrder) {
-            return res.status(404).json({ message: 'Order not found' });
+        if (currentOrder.rows.length > 0 && currentOrder.rows[0].status !== status) {
+            await client.query('INSERT INTO status_history (order_id, status, timestamp) VALUES ($1, $2, $3)', [
+                id,
+                status,
+                new Date(),
+            ]);
         }
 
-        await client.query('DELETE FROM items WHERE order_id = $1', [id]);
+        const orderResult: QueryResult<OutgoingOrderInterface> = await client.query(
+            `
+            WITH updated_order AS (
+                UPDATE orders
+                SET customer = $1, status = $2, priority = $3
+                WHERE id = $4
+                RETURNING *
+            ),
+            deleted_items AS (
+                DELETE FROM items WHERE order_id = $4
+            ),
+            inserted_items AS (
+                INSERT INTO items (name, order_id)
+                SELECT unnest($5::text[]), $4
+                FROM updated_order
+            )
+            SELECT * FROM updated_order;
+            `,
+            [customer, status, priority, id, items],
+        );
 
-        for (const item of items) {
-            await client.query(
-                `
-            INSERT INTO items (name, order_id)
-            VALUES ($1, $2)
-            RETURNING *`,
-                [item, updatedOrder.id],
-            );
+        if (orderResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Order not found' });
         }
 
         const finalResult: QueryResult<OutgoingOrderInterface> = await client.query(
             `
             SELECT 
-              orders.id,
-              orders.customer,
-              orders.status,
-              orders.priority,
-              orders.created_at AS "createdAt",
-              ARRAY_AGG(items.name) AS products,
-              JSON_AGG(
-                JSON_BUILD_OBJECT(
-                  'status', status_history.status,
-                  'timestamp', status_history.timestamp
-                )
-              ) AS "statusHistory"
+            orders.id,
+            orders.customer,
+            orders.status,
+            orders.priority,
+            orders.created_at AS "createdAt",
+            COALESCE(i.products, '{}') AS products,
+            COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
             FROM orders
-            LEFT JOIN items ON orders.id = items.order_id
-            LEFT JOIN status_history ON orders.id = status_history.order_id
+            LEFT JOIN (
+            SELECT order_id, ARRAY_AGG(name) AS products
+            FROM items
+            GROUP BY order_id
+            ) i ON orders.id = i.order_id
+            LEFT JOIN (
+            SELECT order_id, JSON_AGG(
+            JSON_BUILD_OBJECT('status', status, 'timestamp', timestamp)
+            ) AS status_history
+            FROM status_history
+            GROUP BY order_id
+            ) sh ON orders.id = sh.order_id
             WHERE orders.id = $1
-            GROUP BY orders.id
             `,
             [id],
         );
@@ -231,6 +263,8 @@ const updateOrder = async (req: Request<OrderParams, any, UpdateOrderBody>, res:
 const deleteOrder = async (req: Request<OrderParams>, res: Response) => {
     const { id } = req.params;
     const client = await pool.connect();
+    console.log('heck', id);
+    console.log('heck', req);
     try {
         await client.query('BEGIN');
 
