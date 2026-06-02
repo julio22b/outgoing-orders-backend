@@ -8,7 +8,13 @@ const app = express();
 const port = 3000;
 
 app.use(express.json());
-app.use(cors({ origin: '*' }));
+app.use(
+    cors({
+        origin: 'http://localhost:5173',
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+        credentials: true,
+    }),
+);
 app.use('/orders', ordersRouter);
 
 app.listen(port, () => {
