@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import pool from '../db/index';
-import { OutgoingOrderInterface, StatusHistoryInterface } from '../types/types';
+import { OutgoingOrderInterface } from '../types/types';
 import { QueryResult } from 'pg';
 
 interface OrderParams {
@@ -81,7 +81,6 @@ const getOrder = async (req: Request<OrderParams>, res: Response<OutgoingOrderIn
             [req.params.id],
         );
 
-        console.log('heklloo')
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Order not found' });
         }
@@ -165,7 +164,6 @@ const createOrder = async (
 
         res.status(201).json(finalResult.rows[0]);
     } catch (error) {
-        console.error(error); // add this
         await client.query('ROLLBACK');
         res.status(500).json({ message: 'Internal server error' });
     } finally {
@@ -263,8 +261,7 @@ const updateOrder = async (req: Request<OrderParams, any, UpdateOrderBody>, res:
 const deleteOrder = async (req: Request<OrderParams>, res: Response) => {
     const { id } = req.params;
     const client = await pool.connect();
-    console.log('heck', id);
-    console.log('heck', req);
+
     try {
         await client.query('BEGIN');
 
