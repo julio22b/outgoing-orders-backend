@@ -28,11 +28,11 @@ const getAllOrders = async (req: Request, res: Response<OutgoingOrderInterface[]
             orders.status,
             orders.priority,
             orders.created_at AS "createdAt",
-            COALESCE(i.products, '{}') AS products,
+            COALESCE(i.items, '{}') AS items,
             COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
             FROM orders
             LEFT JOIN (
-            SELECT order_id, ARRAY_AGG(name) AS products
+            SELECT order_id, ARRAY_AGG(name) AS items
             FROM items
             GROUP BY order_id
             ) i ON orders.id = i.order_id
@@ -61,11 +61,11 @@ const getOrder = async (req: Request<OrderParams>, res: Response<OutgoingOrderIn
             orders.status,
             orders.priority,
             orders.created_at AS "createdAt",
-            COALESCE(i.products, '{}') AS products,
+            COALESCE(i.items, '{}') AS items,
             COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
             FROM orders
             LEFT JOIN (
-            SELECT order_id, ARRAY_AGG(name) AS products
+            SELECT order_id, ARRAY_AGG(name) AS items
             FROM items
             GROUP BY order_id
             ) i ON orders.id = i.order_id
@@ -140,11 +140,11 @@ const createOrder = async (
             orders.status,
             orders.priority,
             orders.created_at AS "createdAt",
-            COALESCE(i.products, '{}') AS products,
+            COALESCE(i.items, '{}') AS items,
             COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
             FROM orders
             LEFT JOIN (
-            SELECT order_id, ARRAY_AGG(name) AS products
+            SELECT order_id, ARRAY_AGG(name) AS items
             FROM items
             GROUP BY order_id
             ) i ON orders.id = i.order_id
@@ -227,11 +227,11 @@ const updateOrder = async (req: Request<OrderParams, any, UpdateOrderBody>, res:
             orders.status,
             orders.priority,
             orders.created_at AS "createdAt",
-            COALESCE(i.products, '{}') AS products,
+            COALESCE(i.items, '{}') AS items,
             COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
             FROM orders
             LEFT JOIN (
-            SELECT order_id, ARRAY_AGG(name) AS products
+            SELECT order_id, ARRAY_AGG(name) AS items
             FROM items
             GROUP BY order_id
             ) i ON orders.id = i.order_id

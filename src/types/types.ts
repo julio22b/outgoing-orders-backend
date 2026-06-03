@@ -9,6 +9,6 @@ export interface OutgoingOrderInterface {
     status: string;
     priority: string;
     createdAt: string;
-    products: string[];
+    items: string[];
     statusHistory: StatusHistoryInterface[];
 }
