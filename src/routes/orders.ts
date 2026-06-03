@@ -1,16 +1,20 @@
 import { Router } from 'express';
-import { ordersController } from '../controllers/orders';
+import { createOrdersController } from '../controllers/orders';
+import { Server } from 'socket.io';
 
-const ordersRouter = Router();
+export default (io: Server) => {
+    const router = Router();
+    const controller = createOrdersController(io)
 
-ordersRouter.get('/', ordersController.getAllOrders);
+    router.get('/', controller.getAllOrders);
 
-ordersRouter.get('/:id', ordersController.getOrder);
+    router.get('/:id', controller.getOrder);
 
-ordersRouter.post('/', ordersController.createOrder);
+    router.post('/', controller.createOrder);
 
-ordersRouter.put('/:id', ordersController.updateOrder);
+    router.put('/:id', controller.updateOrder);
 
-ordersRouter.delete('/:id', ordersController.deleteOrder);
+    router.delete('/:id', controller.deleteOrder);
 
-export default ordersRouter;
+    return router
+};
