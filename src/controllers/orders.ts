@@ -299,7 +299,7 @@ export const createOrdersController = (io: Server) => {
             }
 
             await client.query('COMMIT');
-            io.emit('order:deleted', id);
+            io.emit('order:deleted', result.rows[0].id);
             res.status(200).json({ message: 'Order deleted successfully' });
         } catch (error) {
             await client.query('ROLLBACK');
