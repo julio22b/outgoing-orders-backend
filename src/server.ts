@@ -9,7 +9,7 @@ import http from 'http';
 const app = express();
 const httpServer = http.createServer(app);
 const port = 3000;
-const origin = 'http://localhost:5173';
+const origin = process.env.FRONTEND_URL ||'http://localhost:5173';
 const methods = ['GET', 'POST', 'PUT', 'DELETE'];
 
 const io = new Server(httpServer, {
