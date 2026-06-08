@@ -23,6 +23,7 @@ services:
             - '3000:3000'
         environment:
             PORT: 3000
+            FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
             DATABASE_URL: postgresql://postgres:secretpassword@db:5432/outgoing_orders?sslmode=disable
             PGHOST: db
             PGPORT: 5432
