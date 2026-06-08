@@ -16,5 +16,7 @@ export default (io: Server) => {
 
     router.delete('/:id', controller.deleteOrder);
 
+    router.patch('/:id/status', controller.transitionOrderStatus);
+
     return router
 };
