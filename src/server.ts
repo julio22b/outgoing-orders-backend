@@ -3,6 +3,7 @@ dotenv.config();
 import express from 'express';
 import cors from 'cors';
 import ordersRouter from './routes/orders';
+import { Request, Response, NextFunction } from 'express';
 import { Server } from 'socket.io';
 import http from 'http';
 
@@ -38,6 +39,11 @@ app.use(
     }),
 );
 app.use('/orders', ordersRouter(io));
+
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+    console.error(err.stack);
+    res.status(500).send('Check logs for details');
+});
 
 httpServer.listen(port, () => {
     console.log('Server running on port 3000');
