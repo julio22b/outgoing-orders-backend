@@ -260,7 +260,6 @@ export const createOrdersController = (io: Server) => {
             const nextStatus = STATUS_TRANSITIONS[currentStatus.rows[0]?.status];
 
             if (!nextStatus) {
-                await client.query('ROLLBACK');
                 return res.status(400).json({ message: 'Invalid status transition' });
             }
 
