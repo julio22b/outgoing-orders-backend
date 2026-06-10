@@ -26,21 +26,22 @@ REST API and real-time WebSocket server for the WMS Outgoing Orders Dashboard. B
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/orders` | Get all orders with items and status history |
-| GET | `/orders/:id` | Get a single order |
-| POST | `/orders` | Create a new order |
-| PUT | `/orders/:id` | Update an order |
-| DELETE | `/orders/:id` | Delete an order |
+| Method | Endpoint             | Description                                  |
+| ------ | -------------------- | -------------------------------------------- |
+| GET    | `/orders`            | Get all orders with items and status history |
+| GET    | `/orders/:id`        | Get a single order                           |
+| POST   | `/orders`            | Create a new order                           |
+| PUT    | `/orders/:id`        | Update an order                              |
+| DELETE | `/orders/:id`        | Delete an order                              |
+| PATCH  | `/orders/:id/status` | Update the status of an order                |
 
 ## Socket.io Events
 
-| Event | Payload | Description |
-|-------|---------|-------------|
+| Event           | Payload      | Description                         |
+| --------------- | ------------ | ----------------------------------- |
 | `order:created` | Order object | Emitted when a new order is created |
-| `order:updated` | Order object | Emitted when an order is updated |
-| `order:deleted` | Order ID | Emitted when an order is deleted |
+| `order:updated` | Order object | Emitted when an order is updated    |
+| `order:deleted` | Order ID     | Emitted when an order is deleted    |
 
 ## Database Schema
 
@@ -73,41 +74,45 @@ status_history
 ### Running with Docker
 
 1. Clone the repo:
-   ```bash
-   git clone https://github.com/yourusername/outgoing-orders-backend.git
-   cd outgoing-orders-backend
-   ```
+
+    ```bash
+    git clone https://github.com/yourusername/outgoing-orders-backend.git
+    cd outgoing-orders-backend
+    ```
 
 2. Create a `.env` file in the project root:
-   ```
-   DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/outgoing_orders
-   FRONTEND_URL=http://localhost:5173
-   PORT=3000
-   ```
+
+    ```
+    DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/outgoing_orders
+    FRONTEND_URL=http://localhost:5173
+    PORT=3000
+    ```
 
 3. Start the services:
-   ```bash
-   docker-compose up --build
-   ```
+    ```bash
+    docker-compose up --build
+    ```
 
 The API will be available at `http://localhost:3000`.
 
 ### Running without Docker
 
 1. Make sure PostgreSQL is running locally and create the database:
-   ```bash
-   psql -U postgres -c "CREATE DATABASE outgoing_orders;"
-   ```
+
+    ```bash
+    psql -U postgres -c "CREATE DATABASE outgoing_orders;"
+    ```
 
 2. Run the table migrations in `psql`:
-   ```sql
-   CREATE TABLE orders ( ... );
-   CREATE TABLE items ( ... );
-   CREATE TABLE status_history ( ... );
-   ```
+
+    ```sql
+    CREATE TABLE orders ( ... );
+    CREATE TABLE items ( ... );
+    CREATE TABLE status_history ( ... );
+    ```
 
 3. Install dependencies and start the dev server:
-   ```bash
-   npm install
-   npm run dev
-   ```
+    ```bash
+    npm install
+    npm run dev
+    ```

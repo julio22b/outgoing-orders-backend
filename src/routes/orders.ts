@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 
 export default (io: Server) => {
     const router = Router();
-    const controller = createOrdersController(io)
+    const controller = createOrdersController(io);
 
     router.get('/', controller.getAllOrders);
 
@@ -18,5 +18,7 @@ export default (io: Server) => {
 
     router.patch('/:id/status', controller.transitionOrderStatus);
 
-    return router
+    router.post('/dev/seed', controller.seedOrders);
+
+    return router;
 };

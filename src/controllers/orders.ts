@@ -3,7 +3,8 @@ import pool from '../db/index';
 import { OutgoingOrderInterface } from '../types/types';
 import { QueryResult } from 'pg';
 import { Server } from 'socket.io';
-import { STATUS_TRANSITIONS } from '../constants';
+import { ORDER_PRIORITIES, STATUS_TRANSITIONS } from '../constants';
+import { getRandomCreatedAt, getRandomItems, getRandomPriority } from '../utils';
 
 interface OrderParams {
     id: string;
@@ -298,5 +299,74 @@ export const createOrdersController = (io: Server) => {
         }
     };
 
-    return { getAllOrders, getOrder, createOrder, updateOrder, deleteOrder, transitionOrderStatus };
+    const seedOrders = async (req: Request, res: Response) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            await client.query(`DELETE FROM orders`);
+
+            for (let i = 0; i < 15; i++) {
+                const body: CreateOrderBody = {
+                    customer: `Customer ${i + 1}`,
+                    status: 'picking',
+                    priority: getRandomPriority(),
+                    items: getRandomItems(),
+                    createdAt: getRandomCreatedAt(),
+                };
+
+                const orderResult: QueryResult<OutgoingOrderInterface> = await client.query(
+                    `INSERT INTO orders (customer, status, priority, created_at) VALUES ($1, $2, $3, $4) RETURNING *`,
+                    [body.customer, body.status, body.priority, body.createdAt],
+                );
+
+                const order = orderResult.rows[0];
+
+                for (const item of body.items) {
+                    await client.query(`INSERT INTO items (name, order_id) VALUES ($1, $2)`, [item, order.id]);
+                }
+
+                await client.query(`INSERT INTO status_history (order_id, status, timestamp) VALUES ($1, $2, $3)`, [
+                    order.id,
+                    body.status,
+                    body.createdAt,
+                ]);
+            }
+
+            await client.query('COMMIT');
+
+            const ordersInPicking: QueryResult<OutgoingOrderInterface> = await client.query(
+                `SELECT * FROM orders WHERE status = 'picking'`,
+            );
+
+            const shuffledOrdersInPicking = ordersInPicking.rows.sort(() => Math.random() - 0.5);
+            const ordersToPack = shuffledOrdersInPicking.slice(0, 10);
+
+            for (const order of ordersToPack)
+                await fetch(`${process.env.BACKEND_URL}/orders/${order.id}/status`, {
+                    method: 'PATCH',
+                });
+
+            const ordersInPacked: QueryResult<OutgoingOrderInterface> = await client.query(
+                `SELECT * FROM orders WHERE status = 'packed'`,
+            );
+
+            const shuffledOrdersInPacked = ordersInPacked.rows.sort(() => Math.random() - 0.5);
+            const ordersToDispatch = shuffledOrdersInPacked.slice(0, 5);
+
+            for (const order of ordersToDispatch)
+                await fetch(`${process.env.BACKEND_URL}/orders/${order.id}/status`, {
+                    method: 'PATCH',
+                });
+
+            res.status(201).json({ message: 'Database seeded successfully' });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            res.status(500).json({ message: 'Internal server error' });
+        } finally {
+            client.release();
+        }
+    };
+
+    return { getAllOrders, getOrder, createOrder, updateOrder, deleteOrder, transitionOrderStatus, seedOrders };
 };
