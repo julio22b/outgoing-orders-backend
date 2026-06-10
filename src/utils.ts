@@ -33,3 +33,23 @@ export const getRandomCreatedAt = () => {
     const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
     return new Date(sevenDaysAgo + Math.random() * (now - sevenDaysAgo)).toISOString();
 };
+
+const CUSTOMERS = [
+    'Acme Logistics',
+    'Bright Supply Co.',
+    'Delta Freight',
+    'Evergreen Wholesale',
+    'Falcon Distribution',
+    'Global Trade Inc.',
+    'Harbor Goods',
+    'Iron Ridge Supply',
+    'Jetstream Commerce',
+    'Keystone Exports',
+    'Lantern Group',
+    'Metro Fulfillment',
+    'Nexus Warehousing',
+    'Orbit Retail',
+    'Pacific Rim Traders',
+];
+
+export const getRandomCustomer = () => CUSTOMERS[Math.floor(Math.random() * CUSTOMERS.length)];

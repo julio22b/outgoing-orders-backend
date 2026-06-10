@@ -4,7 +4,7 @@ import { OutgoingOrderInterface } from '../types/types';
 import { QueryResult } from 'pg';
 import { Server } from 'socket.io';
 import { ORDER_PRIORITIES, STATUS_TRANSITIONS } from '../constants';
-import { getRandomCreatedAt, getRandomItems, getRandomPriority } from '../utils';
+import { getRandomCreatedAt, getRandomCustomer, getRandomItems, getRandomPriority } from '../utils';
 
 interface OrderParams {
     id: string;
@@ -308,7 +308,7 @@ export const createOrdersController = (io: Server) => {
 
             for (let i = 0; i < 15; i++) {
                 const body: CreateOrderBody = {
-                    customer: `Customer ${i + 1}`,
+                    customer: getRandomCustomer(),
                     status: 'picking',
                     priority: getRandomPriority(),
                     items: getRandomItems(),
