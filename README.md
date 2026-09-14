@@ -212,6 +212,6 @@ psql "$DATABASE_URL" -f migrations/004-created-at-constraints.sql
 psql "$DATABASE_URL" -f migrations/005-priority-check.sql
 ```
 
-`001` must run exactly once. `002` onward are safe to re-run, and each constraint migration stops with an error naming any rows that would violate it.
+`001` must run exactly once. `002` onward are safe to re-run. A constraint migration fails without changing anything if existing rows violate it, so fix those rows first.
 
 `002` enables the `pg_trgm` extension, which ships with standard Postgres builds, including the `postgres` Docker image and Render.
