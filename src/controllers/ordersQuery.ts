@@ -1,15 +1,18 @@
+import { createHash } from 'crypto';
 import { Request } from 'express';
 import { ORDER_PRIORITIES, ORDER_STATUSES } from '../constants';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
 const MAX_SEARCH_LENGTH = 100;
+const MIN_CUSTOMER_SEARCH_LENGTH = 3;
 const POSTGRES_INT_MAX = 2147483647;
+const FILTERS_FINGERPRINT_LENGTH = 16;
 
 const SORT_FIELDS = ['createdAt', 'id'] as const;
 const SORT_DIRECTIONS = ['asc', 'desc'] as const;
 const VALID_STATUSES: readonly string[] = ORDER_STATUSES;
-const VALID_PRIORITIES: readonly string[] = Object.values(ORDER_PRIORITIES);
+const VALID_PRIORITIES: readonly string[] = ORDER_PRIORITIES;
 
 const ISO_DATETIME_WITH_OFFSET_PATTERN =
     /^([1-9]\d{3})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,6})?)?(?:Z|[+-](?:0\d|1[0-5]):?[0-5]\d)$/;
@@ -33,15 +36,17 @@ export interface OrderFilters {
     createdAtTo?: string;
 }
 
+type OrderListFilters = OrderFilters & { statuses: string[] };
+
 export interface PageCursor {
     sortField: SortField;
     sortDirection: SortDirection;
+    filtersFingerprint: string;
     lastId: number;
     lastCreatedAt?: string;
 }
 
-export interface OrderListParams extends OrderFilters {
-    statuses: string[];
+export interface OrderListParams extends OrderListFilters {
     sortField: SortField;
     sortDirection: SortDirection;
     limit: number;
@@ -106,10 +111,11 @@ const readCommaSeparatedList = (queryValue: unknown): string[] | typeof INVALID 
     if (!repeatedValues.every((value): value is string => typeof value === 'string')) {
         return INVALID;
     }
-    return repeatedValues
+    const listedValues = repeatedValues
         .flatMap((value) => value.split(','))
         .map((value) => value.trim())
         .filter(Boolean);
+    return listedValues.length > 0 ? listedValues : INVALID;
 };
 
 const readAllowedValue = <T extends string>(
@@ -144,7 +150,30 @@ const readPageLimit = (queryValue: unknown): number | typeof INVALID => {
     return limit >= 1 && limit <= MAX_PAGE_LIMIT ? limit : INVALID;
 };
 
-export const encodeCursor = (cursor: PageCursor) => Buffer.from(JSON.stringify(cursor)).toString('base64url');
+const fingerprintFilters = (filters: OrderListFilters) => {
+    const normalizedFilters = {
+        statuses: [...new Set(filters.statuses)].sort(),
+        priorities: [...new Set(filters.priorities)].sort(),
+        searchTerm: filters.searchTerm ?? null,
+        createdAtFrom: filters.createdAtFrom ?? null,
+        createdAtTo: filters.createdAtTo ?? null,
+    };
+    return createHash('sha256')
+        .update(JSON.stringify(normalizedFilters))
+        .digest('base64url')
+        .slice(0, FILTERS_FINGERPRINT_LENGTH);
+};
+
+const encodeCursor = (cursor: PageCursor) => Buffer.from(JSON.stringify(cursor)).toString('base64url');
+
+export const createNextCursor = (params: OrderListParams, lastRow: { id: number; cursorCreatedAt: string }) =>
+    encodeCursor({
+        sortField: params.sortField,
+        sortDirection: params.sortDirection,
+        filtersFingerprint: fingerprintFilters(params),
+        lastId: lastRow.id,
+        lastCreatedAt: params.sortField === 'createdAt' ? lastRow.cursorCreatedAt : undefined,
+    });
 
 const decodeCursor = (cursorText: string): PageCursor | typeof INVALID => {
     let decoded: unknown;
@@ -156,30 +185,38 @@ const decodeCursor = (cursorText: string): PageCursor | typeof INVALID => {
     if (typeof decoded !== 'object' || decoded === null) {
         return INVALID;
     }
-    const { sortField, sortDirection, lastId, lastCreatedAt } = decoded as Record<string, unknown>;
+    const { sortField, sortDirection, filtersFingerprint, lastId, lastCreatedAt } = decoded as Record<string, unknown>;
     if (!isOneOf(SORT_FIELDS, sortField) || !isOneOf(SORT_DIRECTIONS, sortDirection)) {
+        return INVALID;
+    }
+    if (typeof filtersFingerprint !== 'string') {
         return INVALID;
     }
     if (typeof lastId !== 'number' || !Number.isInteger(lastId) || lastId < 1 || lastId > POSTGRES_INT_MAX) {
         return INVALID;
     }
     if (sortField === 'id') {
-        return { sortField, sortDirection, lastId };
+        return { sortField, sortDirection, filtersFingerprint, lastId };
     }
     return typeof lastCreatedAt === 'string' && isValidIsoDateTime(lastCreatedAt)
-        ? { sortField, sortDirection, lastId, lastCreatedAt }
+        ? { sortField, sortDirection, filtersFingerprint, lastId, lastCreatedAt }
         : INVALID;
 };
 
 export const parseOrderFilters = (query: RequestQuery): ParseResult<OrderFilters> => {
     const priorities = readCommaSeparatedList(query.priority);
     if (priorities === INVALID || priorities.some((priority) => !VALID_PRIORITIES.includes(priority))) {
-        return { message: `priority must be a comma-separated list of: ${VALID_PRIORITIES.join(', ')}` };
+        return { message: `priority must be a non-empty comma-separated list of: ${VALID_PRIORITIES.join(', ')}` };
     }
 
     const searchTerm = readSingleValue(query.search);
     if (searchTerm === INVALID || (searchTerm && searchTerm.length > MAX_SEARCH_LENGTH)) {
         return { message: `search must be a single value of at most ${MAX_SEARCH_LENGTH} characters` };
+    }
+    if (searchTerm && !ORDER_ID_SEARCH_PATTERN.test(searchTerm) && searchTerm.length < MIN_CUSTOMER_SEARCH_LENGTH) {
+        return {
+            message: `search must be an order id (123 or ORD-123) or at least ${MIN_CUSTOMER_SEARCH_LENGTH} characters of a customer name`,
+        };
     }
 
     const createdAtFrom = readIsoDateTime(query.from);
@@ -199,7 +236,7 @@ export const parseOrderListParams = (query: RequestQuery): ParseResult<OrderList
 
     const statuses = readCommaSeparatedList(query.status);
     if (statuses === INVALID || statuses.some((status) => !VALID_STATUSES.includes(status))) {
-        return { message: `status must be a comma-separated list of: ${VALID_STATUSES.join(', ')}` };
+        return { message: `status must be a non-empty comma-separated list of: ${VALID_STATUSES.join(', ')}` };
     }
 
     const sortField = readAllowedValue(query.sort, SORT_FIELDS, 'createdAt');
@@ -217,20 +254,25 @@ export const parseOrderListParams = (query: RequestQuery): ParseResult<OrderList
         return { message: `limit must be an integer from 1 to ${MAX_PAGE_LIMIT}` };
     }
 
+    const listParams: OrderListParams = { ...filters.params, statuses, sortField, sortDirection, limit };
+
     const cursorText = readSingleValue(query.cursor);
-    let cursor: PageCursor | undefined;
-    if (cursorText !== MISSING) {
-        const decodedCursor = cursorText === INVALID ? INVALID : decodeCursor(cursorText);
-        if (decodedCursor === INVALID) {
-            return { message: 'cursor is invalid' };
-        }
-        if (decodedCursor.sortField !== sortField || decodedCursor.sortDirection !== sortDirection) {
-            return { message: 'cursor was issued for a different sort or dir; drop it when either changes' };
-        }
-        cursor = decodedCursor;
+    if (cursorText === MISSING) {
+        return { params: listParams };
     }
 
-    return { params: { ...filters.params, statuses, sortField, sortDirection, limit, cursor } };
+    const decodedCursor = cursorText === INVALID ? INVALID : decodeCursor(cursorText);
+    if (decodedCursor === INVALID) {
+        return { message: 'cursor is invalid' };
+    }
+    if (decodedCursor.sortField !== sortField || decodedCursor.sortDirection !== sortDirection) {
+        return { message: 'cursor was issued for a different sort or dir; drop it when either changes' };
+    }
+    if (decodedCursor.filtersFingerprint !== fingerprintFilters(listParams)) {
+        return { message: 'cursor was issued for different filters; drop it when filters change' };
+    }
+
+    return { params: { ...listParams, cursor: decodedCursor } };
 };
 
 const escapeLikeWildcards = (text: string) => text.replace(/[\\%_]/g, (character) => `\\${character}`);
@@ -304,14 +346,15 @@ export const buildOrderListQuery = (params: OrderListParams) => {
 
 export const buildOrderSummaryQuery = (filters: OrderFilters) => {
     const { values, addQueryParam } = createQueryParams();
+    const countPerStatus = ORDER_STATUSES.map((status) => {
+        const statusParam = addQueryParam(status);
+        return `${statusParam}::text, COUNT(*) FILTER (WHERE orders.status = ${statusParam})`;
+    }).join(',\n                ');
     const text = `
         SELECT
             COUNT(*)::int AS total,
             JSON_BUILD_OBJECT(
-                'picking', COUNT(*) FILTER (WHERE orders.status = 'picking'),
-                'packed', COUNT(*) FILTER (WHERE orders.status = 'packed'),
-                'delayed', COUNT(*) FILTER (WHERE orders.status = 'delayed'),
-                'dispatched', COUNT(*) FILTER (WHERE orders.status = 'dispatched')
+                ${countPerStatus}
             ) AS "byStatus"
         FROM orders
         ${buildWhereClause(buildFilterConditions(filters, addQueryParam))}

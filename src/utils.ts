@@ -23,10 +23,7 @@ export const getRandomItems = () => {
     return shuffled.slice(0, Math.floor(Math.random() * 4) + 1);
 };
 
-export const getRandomPriority = () => {
-    const priorities = Object.values(ORDER_PRIORITIES);
-    return priorities[Math.floor(Math.random() * priorities.length)];
-};
+export const getRandomPriority = () => ORDER_PRIORITIES[Math.floor(Math.random() * ORDER_PRIORITIES.length)];
 
 export const getRandomCreatedAt = () => {
     const now = Date.now();

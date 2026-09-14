@@ -5,8 +5,4 @@ export const STATUS_TRANSITIONS: Record<string, string> = {
 
 export const ORDER_STATUSES = ['picking', 'packed', 'delayed', 'dispatched'] as const;
 
-export const ORDER_PRIORITIES: Record<string, 'low' | 'normal' | 'high'> = {
-    low: 'low',
-    normal: 'normal',
-    high: 'high',
-} as const;
+export const ORDER_PRIORITIES = ['low', 'normal', 'high'] as const;

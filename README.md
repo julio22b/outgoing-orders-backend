@@ -47,9 +47,9 @@ GET /orders?status=picking,packed&priority=high&search=acme&from=2026-09-01T04:0
 
 | Parameter     | Default     | Description                                                                                                                                                                                                                    |
 | ------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `status`      | all         | `picking`, `packed`, `delayed`, `dispatched`. Comma-separated (`status=picking,packed`), repeated (`status=picking&status=packed`), or both.                                                                                   |
-| `priority`    | all         | `low`, `normal`, `high`. Same format as `status`.                                                                                                                                                                              |
-| `search`      | none        | `123` or `ORD-123` matches that order id exactly. Anything else is a case-insensitive substring match on the customer name.                                                                                                    |
+| `status`      | all         | `picking`, `packed`, `delayed`, `dispatched`. Comma-separated (`status=picking,packed`), repeated (`status=picking&status=packed`), or both. Present but empty (`status=`) returns `400`.                                                                                   |
+| `priority`    | all         | `low`, `normal`, `high`. Same format and rules as `status`.                                                                                                                                                                              |
+| `search`      | none        | `123` or `ORD-123` matches that order id exactly. Anything else is a case-insensitive substring match on the customer name, and needs at least 3 characters.                                                                                                    |
 | `from` / `to` | none        | ISO-8601 date-times **with an offset** (`Z` or `-04:00`). `from` is inclusive, `to` is exclusive. Bare dates like `2026-09-01` are rejected: which day they mean depends on a time zone, so send local midnight as an instant. |
 | `sort`        | `createdAt` | `createdAt` or `id`.                                                                                                                                                                                                           |
 | `dir`         | `desc`      | `desc` or `asc`.                                                                                                                                                                                                               |
@@ -90,7 +90,7 @@ The list uses keyset (cursor) pagination instead of `OFFSET` and page numbers. T
 **The tradeoff: there is no jumping to page 47.** There are no page numbers, only "next". Clients page with "load more" or infinite scroll, which is what a virtualized list wants anyway. In exchange, pages are stable while data changes: a new order never shifts later pages by one the way it does with `OFFSET`, so nothing is skipped or shown twice.
 
 - Treat the cursor as opaque; its format may change.
-- A cursor is only valid for the `sort` and `dir` it was issued with. Changing either returns `400`, so drop the cursor and start from the first page. Do the same when filters change.
+- A cursor is only valid for the filters, `sort` and `dir` it was issued with. Changing any of them returns `400`, so drop the cursor and start from the first page. `limit` can change between pages.
 
 ### Summary Counts
 
@@ -130,7 +130,7 @@ orders
   id            SERIAL PRIMARY KEY
   customer      TEXT NOT NULL
   status        TEXT NOT NULL CHECK (picking | packed | delayed | dispatched)
-  priority      TEXT NOT NULL
+  priority      TEXT NOT NULL CHECK (low | normal | high)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 
 items
@@ -209,6 +209,9 @@ psql "$DATABASE_URL" -f migrations/001-timestamps-to-timestamptz.sql
 psql "$DATABASE_URL" -f migrations/002-list-indexes.sql
 psql "$DATABASE_URL" -f migrations/003-status-check.sql
 psql "$DATABASE_URL" -f migrations/004-created-at-constraints.sql
+psql "$DATABASE_URL" -f migrations/005-priority-check.sql
 ```
+
+`001` must run exactly once. `002` onward are safe to re-run, and each constraint migration stops with an error naming any rows that would violate it.
 
 `002` enables the `pg_trgm` extension, which ships with standard Postgres builds, including the `postgres` Docker image and Render.

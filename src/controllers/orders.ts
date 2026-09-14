@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import pool from '../db/index';
-import { OrdersPage, OrdersSummary, OutgoingOrderInterface } from '../types/types';
+import { OrderPriority, OrderStatus, OrdersPage, OrdersSummary, OutgoingOrderInterface } from '../types/types';
 import { QueryResult } from 'pg';
 import { Server } from 'socket.io';
 import { ORDER_PRIORITIES, ORDER_STATUSES, STATUS_TRANSITIONS } from '../constants';
@@ -9,7 +9,7 @@ import {
     BASE_ORDER_QUERY,
     buildOrderListQuery,
     buildOrderSummaryQuery,
-    encodeCursor,
+    createNextCursor,
     isValidIsoDateTime,
     parseOrderFilters,
     parseOrderListParams,
@@ -21,8 +21,8 @@ interface OrderParams {
 
 interface CreateOrderBody {
     customer: string;
-    status: 'picking' | 'packed' | 'delayed' | 'dispatched';
-    priority: 'low' | 'normal' | 'high';
+    status: OrderStatus;
+    priority: OrderPriority;
     items: string[];
     createdAt: string;
 }
@@ -50,14 +50,7 @@ export const createOrdersController = (io: Server) => {
             const hasNextPage = result.rows.length > params.limit;
             const pageRows = result.rows.slice(0, params.limit);
             const lastRow = pageRows[pageRows.length - 1];
-            const nextCursor = hasNextPage
-                ? encodeCursor({
-                      sortField: params.sortField,
-                      sortDirection: params.sortDirection,
-                      lastId: lastRow.id,
-                      lastCreatedAt: lastRow.cursorCreatedAt,
-                  })
-                : null;
+            const nextCursor = hasNextPage ? createNextCursor(params, lastRow) : null;
 
             res.status(200).json({ data: pageRows.map(({ cursorCreatedAt, ...order }) => order), nextCursor });
         } catch (error) {
@@ -113,6 +106,10 @@ export const createOrdersController = (io: Server) => {
 
             if (!ORDER_STATUSES.includes(status)) {
                 return res.status(400).json({ message: `status must be one of: ${ORDER_STATUSES.join(', ')}` });
+            }
+
+            if (!ORDER_PRIORITIES.includes(priority)) {
+                return res.status(400).json({ message: `priority must be one of: ${ORDER_PRIORITIES.join(', ')}` });
             }
 
             if (typeof createdAt !== 'string' || !isValidIsoDateTime(createdAt)) {
@@ -178,6 +175,10 @@ export const createOrdersController = (io: Server) => {
 
             if (!ORDER_STATUSES.includes(status)) {
                 return res.status(400).json({ message: `status must be one of: ${ORDER_STATUSES.join(', ')}` });
+            }
+
+            if (!ORDER_PRIORITIES.includes(priority)) {
+                return res.status(400).json({ message: `priority must be one of: ${ORDER_PRIORITIES.join(', ')}` });
             }
 
             await client.query('BEGIN');
