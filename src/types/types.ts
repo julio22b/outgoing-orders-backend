@@ -12,3 +12,13 @@ export interface OutgoingOrderInterface {
     items: string[];
     statusHistory: StatusHistoryInterface[];
 }
+
+export interface OrdersPage {
+    data: OutgoingOrderInterface[];
+    nextCursor: string | null;
+}
+
+export interface OrdersSummary {
+    total: number;
+    byStatus: Record<StatusHistoryInterface['status'], number>;
+}

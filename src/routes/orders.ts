@@ -8,6 +8,8 @@ export default (io: Server) => {
 
     router.get('/', controller.getAllOrders);
 
+    router.get('/summary', controller.getOrdersSummary);
+
     router.get('/:id', controller.getOrder);
 
     router.post('/', controller.createOrder);

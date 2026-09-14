@@ -1,10 +1,19 @@
 import { Request, Response } from 'express';
 import pool from '../db/index';
-import { OutgoingOrderInterface } from '../types/types';
+import { OrdersPage, OrdersSummary, OutgoingOrderInterface } from '../types/types';
 import { QueryResult } from 'pg';
 import { Server } from 'socket.io';
-import { ORDER_PRIORITIES, STATUS_TRANSITIONS } from '../constants';
+import { ORDER_PRIORITIES, ORDER_STATUSES, STATUS_TRANSITIONS } from '../constants';
 import { getRandomCreatedAt, getRandomCustomer, getRandomItems, getRandomPriority } from '../utils';
+import {
+    BASE_ORDER_QUERY,
+    buildOrderListQuery,
+    buildOrderSummaryQuery,
+    encodeCursor,
+    isValidIsoDateTime,
+    parseOrderFilters,
+    parseOrderListParams,
+} from './ordersQuery';
 
 interface OrderParams {
     id: string;
@@ -22,36 +31,52 @@ interface UpdateOrderBody extends CreateOrderBody {
     id: string;
 }
 
-const BASE_ORDER_QUERY = `
-    SELECT 
-        orders.id,
-        orders.customer,
-        orders.status,
-        orders.priority,
-        orders.created_at AS "createdAt",
-        COALESCE(i.items, '{}') AS items,
-        COALESCE(sh.status_history, '[]'::json) AS "statusHistory"
-    FROM orders
-    LEFT JOIN (
-        SELECT order_id, ARRAY_AGG(name) AS items
-        FROM items
-        GROUP BY order_id
-    ) i ON orders.id = i.order_id
-    LEFT JOIN (
-        SELECT order_id, JSON_AGG(
-            JSON_BUILD_OBJECT('status', status, 'timestamp', timestamp)
-        ) AS status_history
-        FROM status_history
-        GROUP BY order_id
-    ) sh ON orders.id = sh.order_id
-`;
-
 export const createOrdersController = (io: Server) => {
-    const getAllOrders = async (req: Request, res: Response<OutgoingOrderInterface[] | { message: string }>) => {
+    const getAllOrders = async (req: Request, res: Response<OrdersPage | { message: string }>) => {
         try {
-            const result: QueryResult<OutgoingOrderInterface> = await pool.query(BASE_ORDER_QUERY);
+            const parsed = parseOrderListParams(req.query);
 
-            res.status(200).json(result.rows);
+            if ('message' in parsed) {
+                return res.status(400).json({ message: parsed.message });
+            }
+
+            const { params } = parsed;
+            const { text, values } = buildOrderListQuery(params);
+            const result: QueryResult<OutgoingOrderInterface & { cursorCreatedAt: string }> = await pool.query(
+                text,
+                values,
+            );
+
+            const hasNextPage = result.rows.length > params.limit;
+            const pageRows = result.rows.slice(0, params.limit);
+            const lastRow = pageRows[pageRows.length - 1];
+            const nextCursor = hasNextPage
+                ? encodeCursor({
+                      sortField: params.sortField,
+                      sortDirection: params.sortDirection,
+                      lastId: lastRow.id,
+                      lastCreatedAt: lastRow.cursorCreatedAt,
+                  })
+                : null;
+
+            res.status(200).json({ data: pageRows.map(({ cursorCreatedAt, ...order }) => order), nextCursor });
+        } catch (error) {
+            res.status(500).json({ message: 'Internal server error' });
+        }
+    };
+
+    const getOrdersSummary = async (req: Request, res: Response<OrdersSummary | { message: string }>) => {
+        try {
+            const parsed = parseOrderFilters(req.query);
+
+            if ('message' in parsed) {
+                return res.status(400).json({ message: parsed.message });
+            }
+
+            const { text, values } = buildOrderSummaryQuery(parsed.params);
+            const result: QueryResult<OrdersSummary> = await pool.query(text, values);
+
+            res.status(200).json(result.rows[0]);
         } catch (error) {
             res.status(500).json({ message: 'Internal server error' });
         }
@@ -84,6 +109,16 @@ export const createOrdersController = (io: Server) => {
 
             if (!customer || !status || !priority || !items?.length || !createdAt) {
                 return res.status(400).json({ message: 'Invalid request body' });
+            }
+
+            if (!ORDER_STATUSES.includes(status)) {
+                return res.status(400).json({ message: `status must be one of: ${ORDER_STATUSES.join(', ')}` });
+            }
+
+            if (typeof createdAt !== 'string' || !isValidIsoDateTime(createdAt)) {
+                return res.status(400).json({
+                    message: 'createdAt must be an ISO-8601 date-time with an offset, e.g. 2026-01-01T00:00:00Z',
+                });
             }
 
             await client.query('BEGIN');
@@ -139,6 +174,10 @@ export const createOrdersController = (io: Server) => {
 
             if (!customer || !status || !priority || !items?.length || !createdAt) {
                 return res.status(400).json({ message: 'Invalid request body' });
+            }
+
+            if (!ORDER_STATUSES.includes(status)) {
+                return res.status(400).json({ message: `status must be one of: ${ORDER_STATUSES.join(', ')}` });
             }
 
             await client.query('BEGIN');
@@ -368,5 +407,14 @@ export const createOrdersController = (io: Server) => {
         }
     };
 
-    return { getAllOrders, getOrder, createOrder, updateOrder, deleteOrder, transitionOrderStatus, seedOrders };
+    return {
+        getAllOrders,
+        getOrdersSummary,
+        getOrder,
+        createOrder,
+        updateOrder,
+        deleteOrder,
+        transitionOrderStatus,
+        seedOrders,
+    };
 };

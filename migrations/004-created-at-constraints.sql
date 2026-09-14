@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE orders
+    ALTER COLUMN created_at SET NOT NULL;
+
+COMMIT;
