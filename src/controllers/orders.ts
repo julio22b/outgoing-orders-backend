@@ -1,7 +1,14 @@
 import { Request, Response } from 'express';
 import pool from '../db/index';
-import { OrderPriority, OrderStatus, OrdersPage, OrdersSummary, OutgoingOrderInterface } from '../types/types';
-import { QueryResult } from 'pg';
+import {
+    OrderConflict,
+    OrderPriority,
+    OrderStatus,
+    OrdersPage,
+    OrdersSummary,
+    OutgoingOrderInterface,
+} from '../types/types';
+import { PoolClient, QueryResult } from 'pg';
 import { Server } from 'socket.io';
 import { ORDER_PRIORITIES, ORDER_STATUSES, STATUS_TRANSITIONS } from '../constants';
 import { getRandomCreatedAt, getRandomCustomer, getRandomItems, getRandomPriority } from '../utils';
@@ -29,7 +36,16 @@ interface CreateOrderBody {
 
 interface UpdateOrderBody extends CreateOrderBody {
     id: string;
+    version: number;
 }
+
+const readOrderById = async (client: PoolClient, id: string) => {
+    const result: QueryResult<OutgoingOrderInterface> = await client.query(
+        `${BASE_ORDER_QUERY} WHERE orders.id = $1`,
+        [id],
+    );
+    return result.rows[0];
+};
 
 export const createOrdersController = (io: Server) => {
     const getAllOrders = async (req: Request, res: Response<OrdersPage | { message: string }>) => {
@@ -122,8 +138,8 @@ export const createOrdersController = (io: Server) => {
 
             const orderResult: QueryResult<OutgoingOrderInterface> = await client.query(
                 `
-            INSERT INTO orders (customer, status, priority, created_at)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO orders (customer, status, priority, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $4)
             RETURNING *
         `,
                 [customer, status, priority, createdAt],
@@ -163,11 +179,14 @@ export const createOrdersController = (io: Server) => {
         }
     };
 
-    const updateOrder = async (req: Request<OrderParams, any, UpdateOrderBody>, res: Response) => {
+    const updateOrder = async (
+        req: Request<OrderParams, any, UpdateOrderBody>,
+        res: Response<OutgoingOrderInterface | OrderConflict | { message: string }>,
+    ) => {
         const client = await pool.connect();
         try {
             const { id } = req.params;
-            const { customer, status, priority, items, createdAt } = req.body;
+            const { customer, status, priority, items, createdAt, version } = req.body;
 
             if (!customer || !status || !priority || !items?.length || !createdAt) {
                 return res.status(400).json({ message: 'Invalid request body' });
@@ -179,6 +198,12 @@ export const createOrdersController = (io: Server) => {
 
             if (!ORDER_PRIORITIES.includes(priority)) {
                 return res.status(400).json({ message: `priority must be one of: ${ORDER_PRIORITIES.join(', ')}` });
+            }
+
+            if (!Number.isInteger(version)) {
+                return res.status(400).json({
+                    message: 'version must be the integer version of the order being replaced',
+                });
             }
 
             await client.query('BEGIN');
@@ -197,12 +222,12 @@ export const createOrdersController = (io: Server) => {
                 `
             WITH updated_order AS (
                 UPDATE orders
-                SET customer = $1, status = $2, priority = $3
-                WHERE id = $4
+                SET customer = $1, status = $2, priority = $3, version = version + 1, updated_at = NOW()
+                WHERE id = $4 AND version = $6
                 RETURNING *
             ),
             deleted_items AS (
-                DELETE FROM items WHERE order_id = $4
+                DELETE FROM items WHERE order_id = $4 AND EXISTS (SELECT 1 FROM updated_order)
             ),
             inserted_items AS (
                 INSERT INTO items (name, order_id)
@@ -211,12 +236,21 @@ export const createOrdersController = (io: Server) => {
             )
             SELECT * FROM updated_order;
             `,
-                [customer, status, priority, id, items],
+                [customer, status, priority, id, items, version],
             );
 
             if (orderResult.rows.length === 0) {
                 await client.query('ROLLBACK');
-                return res.status(404).json({ message: 'Order not found' });
+                const winningOrder = await readOrderById(client, id);
+
+                if (!winningOrder) {
+                    return res.status(404).json({ message: 'Order not found' });
+                }
+
+                return res.status(409).json({
+                    message: 'Order was modified by another write; reload and reapply your changes',
+                    current: winningOrder,
+                });
             }
 
             const finalResult: QueryResult<OutgoingOrderInterface> = await client.query(
@@ -284,34 +318,53 @@ export const createOrdersController = (io: Server) => {
         }
     };
 
-    const transitionOrderStatus = async (req: Request<OrderParams>, res: Response) => {
+    const transitionOrderStatus = async (
+        req: Request<OrderParams>,
+        res: Response<OutgoingOrderInterface | OrderConflict | { message: string }>,
+    ) => {
         const { id } = req.params;
         const client = await pool.connect();
 
         try {
             await client.query('BEGIN');
 
-            const currentStatus = await client.query(
+            const currentStatusResult = await client.query(
                 `
                 SELECT status FROM orders WHERE id = $1
                 `,
                 [id],
             );
 
-            const nextStatus = STATUS_TRANSITIONS[currentStatus.rows[0]?.status];
+            const currentStatus = currentStatusResult.rows[0]?.status;
+            const nextStatus = STATUS_TRANSITIONS[currentStatus];
 
             if (!nextStatus) {
+                await client.query('ROLLBACK');
                 return res.status(400).json({ message: 'Invalid status transition' });
             }
 
-            await client.query(
+            const advanced = await client.query(
                 `
                 UPDATE orders
-                SET status = $1
-                WHERE id = $2
+                SET status = $1, version = version + 1, updated_at = NOW()
+                WHERE id = $2 AND status = $3
             `,
-                [nextStatus, id],
+                [nextStatus, id, currentStatus],
             );
+
+            if (advanced.rowCount === 0) {
+                await client.query('ROLLBACK');
+                const winningOrder = await readOrderById(client, id);
+
+                if (!winningOrder) {
+                    return res.status(404).json({ message: 'Order not found' });
+                }
+
+                return res.status(409).json({
+                    message: 'Order status was advanced by another write',
+                    current: winningOrder,
+                });
+            }
 
             await client.query(
                 `
@@ -322,15 +375,12 @@ export const createOrdersController = (io: Server) => {
                 [id, nextStatus],
             );
 
-            const updatedOrder: QueryResult<OutgoingOrderInterface> = await client.query(
-                `${BASE_ORDER_QUERY} WHERE orders.id = $1`,
-                [id],
-            );
+            const updatedOrder = await readOrderById(client, id);
 
             await client.query('COMMIT');
 
-            io.emit('order:updated', updatedOrder.rows[0]);
-            res.status(200).json({ message: 'Order status updated successfully' });
+            io.emit('order:updated', updatedOrder);
+            res.status(200).json(updatedOrder);
         } catch (error) {
             await client.query('ROLLBACK');
             res.status(500).json({ message: 'Internal server error' });
@@ -356,7 +406,7 @@ export const createOrdersController = (io: Server) => {
                 };
 
                 const orderResult: QueryResult<OutgoingOrderInterface> = await client.query(
-                    `INSERT INTO orders (customer, status, priority, created_at) VALUES ($1, $2, $3, $4) RETURNING *`,
+                    `INSERT INTO orders (customer, status, priority, created_at, updated_at) VALUES ($1, $2, $3, $4, $4) RETURNING *`,
                     [body.customer, body.status, body.priority, body.createdAt],
                 );
 

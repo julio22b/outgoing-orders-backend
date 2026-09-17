@@ -14,8 +14,15 @@ export interface OutgoingOrderInterface {
     status: OrderStatus;
     priority: OrderPriority;
     createdAt: string;
+    updatedAt: string;
+    version: number;
     items: string[];
     statusHistory: StatusHistoryInterface[];
+}
+
+export interface OrderConflict {
+    message: string;
+    current: OutgoingOrderInterface;
 }
 
 export interface OrdersPage {

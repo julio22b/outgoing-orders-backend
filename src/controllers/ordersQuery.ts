@@ -60,6 +60,8 @@ export const buildOrderQuery = (ordersSource: string, extraSelectColumn?: string
         orders.status,
         orders.priority,
         orders.created_at AS "createdAt",
+        orders.version,
+        orders.updated_at AS "updatedAt",
         COALESCE(order_items.item_names, '{}') AS items,
         COALESCE(order_history.history_entries, '[]'::json) AS "statusHistory"${extraSelectColumn ? `,\n        ${extraSelectColumn}` : ''}
     FROM ${ordersSource} orders

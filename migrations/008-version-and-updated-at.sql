@@ -1,0 +1,9 @@
+BEGIN;
+
+ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+UPDATE orders SET updated_at = created_at WHERE version = 1;
+
+COMMIT;

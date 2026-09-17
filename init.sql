@@ -3,7 +3,9 @@ CREATE TABLE IF NOT EXISTS orders (
     customer TEXT NOT NULL,
     status TEXT NOT NULL CONSTRAINT orders_status_check CHECK (status IN ('picking', 'packed', 'delayed', 'dispatched')),
     priority TEXT NOT NULL CONSTRAINT orders_priority_check CHECK (priority IN ('low', 'normal', 'high')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    version INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS items (

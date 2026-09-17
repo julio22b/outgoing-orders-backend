@@ -37,6 +37,16 @@ REST API and real-time WebSocket server for the WMS Outgoing Orders Dashboard. B
 | DELETE | `/orders/:id`        | Delete an order                                             |
 | PATCH  | `/orders/:id/status` | Update the status of an order                               |
 
+### Concurrent Edits
+
+`PUT /orders/:id` requires the `version` of the order it is replacing. A stale version writes nothing and returns `409` with the current order:
+
+```json
+{ "message": "Order was modified by another write; reload and reapply your changes", "current": { "id": 99850, "version": 3 } }
+```
+
+`PATCH /orders/:id/status` still takes no body and returns `409` the same way if the order was already advanced. Both bump `version` and `updated_at` in the same statement as the write.
+
 ## Listing Orders
 
 `GET /orders` returns one page at a time. Filtering, sorting and paging all happen in Postgres, so a response never holds more than `limit` orders.
@@ -132,6 +142,8 @@ orders
   status        TEXT NOT NULL CHECK (picking | packed | delayed | dispatched)
   priority      TEXT NOT NULL CHECK (low | normal | high)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  version       INTEGER NOT NULL DEFAULT 1
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 
 items
   id            SERIAL PRIMARY KEY
@@ -210,8 +222,28 @@ psql "$DATABASE_URL" -f migrations/002-list-indexes.sql
 psql "$DATABASE_URL" -f migrations/003-status-check.sql
 psql "$DATABASE_URL" -f migrations/004-created-at-constraints.sql
 psql "$DATABASE_URL" -f migrations/005-priority-check.sql
+psql "$DATABASE_URL" -f migrations/006-status-index.sql
+psql "$DATABASE_URL" -f migrations/007-summary-status-index.sql
+psql "$DATABASE_URL" -f migrations/008-version-and-updated-at.sql
 ```
 
 `001` must run exactly once. `002` onward are safe to re-run. A constraint migration fails without changing anything if existing rows violate it, so fix those rows first.
 
 `002` enables the `pg_trgm` extension, which ships with standard Postgres builds, including the `postgres` Docker image and Render.
+
+### Connecting to a Hosted Database
+
+`node-postgres` treats `sslmode=require` as `verify-full`, so a provider with a self-signed chain needs `sslmode=no-verify`:
+
+```bash
+export DATABASE_URL='postgresql://postgres.abcdefghijklmnopqrst:PASSWORD@aws-1-us-east-2.pooler.supabase.com:5432/postgres?sslmode=no-verify'
+```
+
+`psql` rejects that value (`invalid sslmode value: "no-verify"`); use `sslmode=require`, which in libpq already means encrypt without verifying:
+
+```bash
+psql "postgresql://postgres.abcdefghijklmnopqrst:PASSWORD@aws-1-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require" \
+    -f migrations/002-list-indexes.sql
+```
+
+On a shared pooler the username carries the project (`postgres.<project-ref>` on Supabase) or the connection fails with `ENOIDENTIFIER`; use port `5432`, not `6543`.
