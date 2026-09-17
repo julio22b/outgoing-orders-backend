@@ -283,11 +283,16 @@ const createQueryParams = () => {
     return { values, addQueryParam };
 };
 
+const buildSingleStatusEqualityOrAnyList = (statuses: string[], addQueryParam: AddQueryParam) =>
+    statuses.length === 1
+        ? `orders.status = ${addQueryParam(statuses[0])}`
+        : `orders.status = ANY(${addQueryParam(statuses)}::text[])`;
+
 const buildFilterConditions = (filters: OrderFilters & { statuses?: string[] }, addQueryParam: AddQueryParam) => {
     const conditions: string[] = [];
 
     if (filters.statuses?.length) {
-        conditions.push(`orders.status = ANY(${addQueryParam(filters.statuses)}::text[])`);
+        conditions.push(buildSingleStatusEqualityOrAnyList(filters.statuses, addQueryParam));
     }
     if (filters.priorities.length) {
         conditions.push(`orders.priority = ANY(${addQueryParam(filters.priorities)}::text[])`);
