@@ -19,6 +19,7 @@ import {
     createNextCursor,
     isValidIsoDateTime,
     parseOrderFilters,
+    parseOrderId,
     parseOrderListParams,
 } from './ordersQuery';
 
@@ -39,10 +40,10 @@ interface UpdateOrderBody extends CreateOrderBody {
     version: number;
 }
 
-const readOrderById = async (client: PoolClient, id: string) => {
+const readOrderById = async (client: PoolClient, orderId: number) => {
     const result: QueryResult<OutgoingOrderInterface> = await client.query(
         `${BASE_ORDER_QUERY} WHERE orders.id = $1`,
-        [id],
+        [orderId],
     );
     return result.rows[0];
 };
@@ -92,10 +93,16 @@ export const createOrdersController = (io: Server) => {
     };
 
     const getOrder = async (req: Request<OrderParams>, res: Response<OutgoingOrderInterface | { message: string }>) => {
+        const orderId = parseOrderId(req.params.id);
+
+        if (orderId === null) {
+            return res.status(400).json({ message: 'id must be a positive integer' });
+        }
+
         try {
             const result: QueryResult<OutgoingOrderInterface> = await pool.query(
                 `${BASE_ORDER_QUERY} WHERE orders.id = $1`,
-                [req.params.id],
+                [orderId],
             );
 
             if (result.rows.length === 0) {
@@ -183,9 +190,14 @@ export const createOrdersController = (io: Server) => {
         req: Request<OrderParams, any, UpdateOrderBody>,
         res: Response<OutgoingOrderInterface | OrderConflict | { message: string }>,
     ) => {
+        const orderId = parseOrderId(req.params.id);
+
+        if (orderId === null) {
+            return res.status(400).json({ message: 'id must be a positive integer' });
+        }
+
         const client = await pool.connect();
         try {
-            const { id } = req.params;
             const { customer, status, priority, items, createdAt, version } = req.body;
 
             if (!customer || !status || !priority || !items?.length || !createdAt) {
@@ -208,11 +220,11 @@ export const createOrdersController = (io: Server) => {
 
             await client.query('BEGIN');
 
-            const currentOrder = await client.query('SELECT status FROM orders WHERE id = $1', [id]);
+            const currentOrder = await client.query('SELECT status FROM orders WHERE id = $1', [orderId]);
 
             if (currentOrder.rows.length > 0 && currentOrder.rows[0].status !== status) {
                 await client.query('INSERT INTO status_history (order_id, status, timestamp) VALUES ($1, $2, $3)', [
-                    id,
+                    orderId,
                     status,
                     new Date(),
                 ]);
@@ -236,12 +248,12 @@ export const createOrdersController = (io: Server) => {
             )
             SELECT * FROM updated_order;
             `,
-                [customer, status, priority, id, items, version],
+                [customer, status, priority, orderId, items, version],
             );
 
             if (orderResult.rows.length === 0) {
                 await client.query('ROLLBACK');
-                const winningOrder = await readOrderById(client, id);
+                const winningOrder = await readOrderById(client, orderId);
 
                 if (!winningOrder) {
                     return res.status(404).json({ message: 'Order not found' });
@@ -255,7 +267,7 @@ export const createOrdersController = (io: Server) => {
 
             const finalResult: QueryResult<OutgoingOrderInterface> = await client.query(
                 `${BASE_ORDER_QUERY} WHERE orders.id = $1`,
-                [id],
+                [orderId],
             );
 
             await client.query('COMMIT');
@@ -271,7 +283,12 @@ export const createOrdersController = (io: Server) => {
     };
 
     const deleteOrder = async (req: Request<OrderParams>, res: Response) => {
-        const { id } = req.params;
+        const orderId = parseOrderId(req.params.id);
+
+        if (orderId === null) {
+            return res.status(400).json({ message: 'id must be a positive integer' });
+        }
+
         const client = await pool.connect();
 
         try {
@@ -282,7 +299,7 @@ export const createOrdersController = (io: Server) => {
             DELETE FROM ITEMS
             WHERE order_id = $1
             `,
-                [id],
+                [orderId],
             );
 
             await client.query(
@@ -290,7 +307,7 @@ export const createOrdersController = (io: Server) => {
             DELETE FROM status_history
             WHERE order_id = $1
             `,
-                [id],
+                [orderId],
             );
 
             const result: QueryResult<OutgoingOrderInterface> = await client.query(
@@ -299,7 +316,7 @@ export const createOrdersController = (io: Server) => {
             WHERE orders.id = $1
             RETURNING *
             `,
-                [id],
+                [orderId],
             );
 
             if (!result.rows[0]) {
@@ -322,7 +339,12 @@ export const createOrdersController = (io: Server) => {
         req: Request<OrderParams>,
         res: Response<OutgoingOrderInterface | OrderConflict | { message: string }>,
     ) => {
-        const { id } = req.params;
+        const orderId = parseOrderId(req.params.id);
+
+        if (orderId === null) {
+            return res.status(400).json({ message: 'id must be a positive integer' });
+        }
+
         const client = await pool.connect();
 
         try {
@@ -332,7 +354,7 @@ export const createOrdersController = (io: Server) => {
                 `
                 SELECT status FROM orders WHERE id = $1
                 `,
-                [id],
+                [orderId],
             );
 
             const currentStatus = currentStatusResult.rows[0]?.status;
@@ -349,12 +371,12 @@ export const createOrdersController = (io: Server) => {
                 SET status = $1, version = version + 1, updated_at = NOW()
                 WHERE id = $2 AND status = $3
             `,
-                [nextStatus, id, currentStatus],
+                [nextStatus, orderId, currentStatus],
             );
 
             if (advanced.rowCount === 0) {
                 await client.query('ROLLBACK');
-                const winningOrder = await readOrderById(client, id);
+                const winningOrder = await readOrderById(client, orderId);
 
                 if (!winningOrder) {
                     return res.status(404).json({ message: 'Order not found' });
@@ -372,10 +394,10 @@ export const createOrdersController = (io: Server) => {
                 (order_id, status, timestamp)
                 VALUES ($1, $2, NOW())
                 `,
-                [id, nextStatus],
+                [orderId, nextStatus],
             );
 
-            const updatedOrder = await readOrderById(client, id);
+            const updatedOrder = await readOrderById(client, orderId);
 
             await client.query('COMMIT');
 

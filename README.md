@@ -37,6 +37,8 @@ REST API and real-time WebSocket server for the WMS Outgoing Orders Dashboard. B
 | DELETE | `/orders/:id`        | Delete an order                                             |
 | PATCH  | `/orders/:id/status` | Update the status of an order                               |
 
+On every `:id` route, an id that is not a positive integer no larger than 2147483647 returns `400` with `{ "message": "id must be a positive integer" }`. A well-formed id that matches no row returns `404`.
+
 ### Concurrent Edits
 
 `PUT /orders/:id` requires the `version` of the order it is replacing. A stale version writes nothing and returns `409` with the current order:

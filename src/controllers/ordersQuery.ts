@@ -17,6 +17,7 @@ const VALID_PRIORITIES: readonly string[] = ORDER_PRIORITIES;
 const ISO_DATETIME_WITH_OFFSET_PATTERN =
     /^([1-9]\d{3})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,6})?)?(?:Z|[+-](?:0\d|1[0-5]):?[0-5]\d)$/;
 const ORDER_ID_SEARCH_PATTERN = /^(?:ord-?)?(\d+)$/i;
+const ORDER_ID_PATTERN = /^\d+$/;
 
 const CURSOR_CREATED_AT_COLUMN = `TO_CHAR(orders.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "cursorCreatedAt"`;
 
@@ -93,6 +94,14 @@ export const isValidIsoDateTime = (value: string) => {
     const [year, month, day] = match.slice(1, 4).map(Number);
     const calendarDate = new Date(Date.UTC(year, month - 1, day));
     return calendarDate.getUTCMonth() === month - 1 && calendarDate.getUTCDate() === day;
+};
+
+export const parseOrderId = (id: string): number | typeof INVALID => {
+    if (!ORDER_ID_PATTERN.test(id)) {
+        return INVALID;
+    }
+    const orderId = Number(id);
+    return orderId > 0 && orderId <= POSTGRES_INT_MAX ? orderId : INVALID;
 };
 
 const readSingleValue = (queryValue: unknown): string | typeof MISSING | typeof INVALID => {
